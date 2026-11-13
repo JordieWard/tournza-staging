@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta name="robots" content="noindex, nofollow">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[STAGING] Pretend billing — Tournza</title>
+<style>
+:root{--ink:#07101f;--surface:#0f1b34;--ivory:#edf2ff;--dim:#b9c8ef;--green:#1fc97a;--red:#ff6b72;--wire:#22325a;color-scheme:dark}
+[hidden]{display:none!important}*{box-sizing:border-box}body{margin:0;background:var(--ink);color:var(--ivory);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.card{width:100%;max-width:440px;background:var(--surface);border:1px solid var(--wire);border-radius:16px;padding:24px}
+.warn{background:#ff2d55;color:#fff;font-weight:700;font-size:13px;letter-spacing:.04em;border-radius:10px;padding:10px 12px;margin-bottom:18px;text-align:center}
+h1{font-size:20px;margin:0 0 14px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--wire);font-size:15px}
+h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);margin:22px 0 8px}
+.btns{display:grid;gap:10px}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:12px;cursor:pointer;background:#2a3a63;color:var(--ivory)}
+button.main{background:var(--green);color:#04210f}button.danger{background:transparent;border:1px solid var(--red);color:var(--red)}
+button:disabled{opacity:.5;cursor:default}
+.msg{margin-top:14px;font-size:14px;min-height:1.5em}.msg.bad{color:var(--red)}.msg.good{color:var(--green)}
+a{color:var(--green)}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="warn">PRETEND BILLING · STAGING · NO REAL MONEY</div>
+  <h1>Your membership</h1>
+  <div id="rows">Loading…</div>
+  <div id="controls" hidden>
+    <h2>Manage</h2>
+    <div class="btns">
+      <button class="main" id="toggle"></button>
+      <button class="danger" id="end">End membership now</button>
+    </div>
+    <h2>Tester tools</h2>
+    <div class="btns">
+      <button id="renew">Simulate renewal payment</button>
+      <button id="renew_fail">Simulate failed renewal payment</button>
+    </div>
+  </div>
+  <p class="msg" id="msg"></p>
+  <p><a href="/#account">← Back to your account</a></p>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const sb = supabase.createClient("https://aefsymjrxjnrbktlbmal.supabase.co", "sb_publishable_keIn1In_6zMKYwhieWGUtg_W5B2Rmue");
+const $ = (id) => document.getElementById(id);
+const label = { active: 'Active', past_due: 'Payment failed — not active', canceled: 'Ended' };
+async function call(action){
+  const { data, error } = await sb.functions.invoke('mock-payments', { body: { action } });
+  if (error) { let j = {}; try { j = await error.context.json(); } catch(_){} return { error: j.error || error.message }; }
+  return data;
+}
+function msg(t, kind){ const m = $('msg'); m.textContent = t || ''; m.className = 'msg ' + (kind || ''); }
+function render(sub){
+  const d = new Date(sub.current_period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  $('rows').innerHTML =
+    `<div class="row"><span>Plan</span><span>${sub.plan === 'annual' ? 'Annual · £80/year' : 'Monthly · £8/month'}</span></div>` +
+    `<div class="row"><span>Status</span><span>${label[sub.status] || sub.status}</span></div>` +
+    `<div class="row"><span>${sub.cancel_at_period_end ? 'Ends' : 'Renews'}</span><span>${d}</span></div>`;
+  $('controls').hidden = sub.status === 'canceled';
+  $('toggle').textContent = sub.cancel_at_period_end ? 'Turn auto-renew back on' : 'Cancel (turn off auto-renew)';
+  $('toggle').dataset.action = sub.cancel_at_period_end ? 'resume' : 'cancel_renewal';
+}
+async function act(action, done){
+  document.querySelectorAll('button').forEach(b => b.disabled = true); msg('Working…');
+  const r = await call(action);
+  document.querySelectorAll('button').forEach(b => b.disabled = false);
+  if (r.error) { msg(r.error, 'bad'); return; }
+  render(r); msg(done, 'good');
+}
+(async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { $('rows').innerHTML = '<a href="login.html">Sign in to staging</a> first.'; return; }
+  const r = await call('billing');
+  if (r.error) { $('rows').textContent = r.error; return; }
+  render(r);
+  $('toggle').onclick = () => act($('toggle').dataset.action, 'Updated.');
+  $('end').onclick = () => { if (confirm('End this pretend membership now?')) act('end', 'Membership ended.'); };
+  $('renew').onclick = () => act('renew', 'Renewal paid (pretend) — renewal date moved on.');
+  $('renew_fail').onclick = () => act('renew_fail', 'Renewal failed (pretend) — membership is now inactive.');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta name="robots" content="noindex, nofollow">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[STAGING] Pretend checkout — Tournza</title>
+<style>
+:root{--ink:#07101f;--surface:#0f1b34;--ivory:#edf2ff;--dim:#b9c8ef;--blue:#0b5fff;--green:#1fc97a;--red:#ff6b72;--wire:#22325a;color-scheme:dark}
+[hidden]{display:none!important}*{box-sizing:border-box}body{margin:0;background:var(--ink);color:var(--ivory);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.card{width:100%;max-width:420px;background:var(--surface);border:1px solid var(--wire);border-radius:16px;padding:24px}
+.warn{background:#ff2d55;color:#fff;font-weight:700;font-size:13px;letter-spacing:.04em;border-radius:10px;padding:10px 12px;margin-bottom:18px;text-align:center}
+h1{font-size:20px;margin:0 0 4px}.sub{color:var(--dim);margin:0 0 18px;font-size:14px}
+.row{display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--wire);font-size:15px}.row b{font-size:18px}
+.btns{display:grid;gap:10px;margin-top:20px}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:13px;cursor:pointer}
+.pay{background:var(--green);color:#04210f}.decl{background:#2a3a63;color:var(--ivory)}.cancel{background:transparent;color:var(--dim);border:1px solid var(--wire)}
+button:disabled{opacity:.5;cursor:default}
+.msg{margin-top:14px;font-size:14px;min-height:1.5em}.msg.bad{color:var(--red)}.msg.good{color:var(--green)}
+.small{font-size:12px;color:var(--dim);margin-top:16px}
+a{color:var(--green)}
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="warn">PRETEND PAYMENT · STAGING · NO REAL MONEY</div>
+  <h1 id="title">Loading…</h1>
+  <p class="sub" id="sub">&nbsp;</p>
+  <div id="rows"></div>
+  <div class="btns" id="btns" hidden>
+    <button class="pay" id="pay">Pay (pretend)</button>
+    <button class="decl" id="decline">Test: card declined</button>
+    <button class="cancel" id="cancel">Cancel and go back</button>
+  </div>
+  <div class="btns" id="after" hidden>
+    <button class="decl" id="redeliver">Test: provider sends “paid” again</button>
+    <button class="cancel" id="back">Back to Tournza</button>
+  </div>
+  <p class="msg" id="msg"></p>
+  <p class="small">This page stands in for a payment provider's checkout while Tournza is tested. Nothing is charged, and no card details are asked for or kept.</p>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = "https://aefsymjrxjnrbktlbmal.supabase.co";
+const SUPABASE_KEY = "sb_publishable_keIn1In_6zMKYwhieWGUtg_W5B2Rmue";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const $ = (id) => document.getElementById(id);
+const s = new URLSearchParams(location.search).get('s') || '';
+const money = (p) => '£' + (p / 100).toFixed(2);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let view = null;
+
+async function call(action){
+  const { data, error } = await sb.functions.invoke('mock-payments', { body: { action, s } });
+  if (error) { let j = {}; try { j = await error.context.json(); } catch(_){} return { ...j, error: j.error || error.message }; }
+  return data;
+}
+function msg(t, kind){ const m = $('msg'); m.textContent = t || ''; m.className = 'msg ' + (kind || ''); }
+function render(v){
+  view = v;
+  const isEntry = v.kind === 'entry';
+  $('title').textContent = isEntry ? 'Tournament entry' : 'Tournza membership';
+  $('sub').textContent = isEntry ? (v.tournament || 'Tournament') : (v.plan === 'annual' ? 'Annual plan — renews every year' : 'Monthly plan — renews every month');
+  $('rows').innerHTML =
+    `<div class="row"><span>${isEntry ? 'Entry fee' : (v.plan === 'annual' ? 'Per year' : 'Per month')}</span><b>${money(v.amount_pence)}</b></div>` +
+    `<div class="row"><span>Status</span><span>${esc(v.status)}</span></div>` +
+    (v.status === 'open' ? `<div class="row"><span>Hold expires</span><span>${new Date(v.expires_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}</span></div>` : '');
+  $('pay').textContent = 'Pay ' + money(v.amount_pence) + ' (pretend)';
+  $('btns').hidden = v.status !== 'open';
+  $('after').hidden = v.status === 'open';
+  $('redeliver').hidden = !(isEntry && v.status === 'paid');
+}
+function busy(on){ document.querySelectorAll('button').forEach(b => b.disabled = on); }
+
+async function act(action){
+  busy(true); msg('Working…');
+  const r = await call(action);
+  busy(false);
+  if (r.error && !r.declined) { msg(r.error, 'bad'); if (r.status) render(r); return; }
+  if (r.declined) { msg(r.error, 'bad'); return; }
+  render(r);
+  if (action === 'redeliver') { msg('Sent again. Result: ' + (r.result || 'ok') + ' — nothing should have changed.', 'good'); return; }
+  if (r.redirect) { msg(action === 'pay' ? 'Paid (pretend). Taking you back…' : 'Cancelled. Taking you back…', 'good'); setTimeout(() => location.href = r.redirect, 900); }
+}
+
+(async () => {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { $('title').textContent = 'Please sign in first'; $('sub').innerHTML = '<a href="login.html">Sign in to staging</a>, then try again.'; return; }
+  if (!s) { $('title').textContent = 'No checkout'; return; }
+  const v = await call('view');
+  if (v.error) { $('title').textContent = 'Checkout not found'; $('sub').textContent = v.error; return; }
+  render(v);
+  $('pay').onclick = () => act('pay');
+  $('decline').onclick = () => act('decline');
+  $('cancel').onclick = () => act('cancel');
+  $('redeliver').onclick = () => act('redeliver');
+  $('back').onclick = () => location.href = '/';
+})();
+</script>
+</body>
+</html>
