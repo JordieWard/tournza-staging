@@ -2399,7 +2399,7 @@
       <p>Payments are processed securely by Stripe. Except where required by law or stated above, membership fees and event entries are non-refundable once an event has started.</p>
 
       <h3>7. Prizes</h3>
-      <p>Each event's prize pool is split: winner 50%, runner-up 30% and each losing semi-finalist 10%. When only 4–5 players take part there are no semi-finals, so it's winner 60% and runner-up 40%. Prizes are worked out to the penny; any leftover penny goes to the winner. If a prize place can't be awarded (for example, the final isn't played), that money is held and Tournza decides, with a recorded reason, how it is paid out or refunded — it is never simply kept.</p>
+      <p>Each event's prize pool is split: winner 50%, runner-up 30% and each losing semi-finalist 10%. A semi-finalist prize is only paid when it is at least the £8 entry fee (from 16 players); otherwise, and when only 4–5 players take part, there is no 3rd prize and it's winner 60% and runner-up 40%. Prizes are worked out to the penny; any leftover penny goes to the winner. If a prize place can't be awarded (for example, the final isn't played), that money is held and Tournza decides, with a recorded reason, how it is paid out or refunded — it is never simply kept.</p>
       <p>Prizes are paid to winners directly by Tournza once a result is final: after the 24-hour dispute window has closed with no open dispute. We’ll confirm the payment method before paid tournaments open. Winners are responsible for any tax on prizes.</p>
 
       <h3>8. Liability</h3>
@@ -2544,9 +2544,11 @@ const FORMAT = "Group round robin → knockout to final";
 const PRICE_MONTHLY = 8, PRICE_ANNUAL = 80, PRICE_ENTRY = 8;
 const PRIZE_PER_ENTRY = 5;
 // Same rule the database records prizes with (PAY-05): pence, shares rounded down, leftover pennies to the winner.
-// 6+ players have semi-finals: 50% / 30% / 20% shared by the two semi-finalists. 4–5 players: 60% / 40%.
+// 50% / 30% / 20% shared by the two semi-finalists — but only when 6+ play AND each semi-finalist's share is at least
+// the entry fee (from 16 players at £8). Otherwise no 3rd prize: 60% / 40%.
 function prizeSplit(players){
-  const pool = Math.max(players, 0) * PRIZE_PER_ENTRY * 100, semis = players >= 6 ? 2 : 0;
+  const pool = Math.max(players, 0) * PRIZE_PER_ENTRY * 100;
+  const semis = players >= 6 && Math.floor(Math.floor(pool * 20 / 100) / 2) >= PRICE_ENTRY * 100 ? 2 : 0;
   const ru = Math.floor(pool * (semis ? 30 : 40) / 100), third = semis ? Math.floor(Math.floor(pool * 20 / 100) / semis) : 0;
   return { pool, winner: pool - ru - third * semis, runnerUp: ru, third, semis };
 }
@@ -2919,7 +2921,7 @@ function renderEventDetail(id){
             ${row('checkin','Entries close · check-in', `${EV_ENTRIES} · 19:00–${e.checkin}`)}
             ${row('prize','Prize pool', `${penceGBP(ps.pool)} now · up to ${penceGBP(full)} · <span class="evd-split">1st ${penceGBP(ps.winner)} · 2nd ${penceGBP(ps.runnerUp)}${ps.semis ? ` · 3rd ${penceGBP(ps.third)} each (2 semi-finalists)` : ''}</span>`)}
           </div>
-          <p class="form-note evd-fine">£5 of every entry goes into the prize pool: winner 50%, runner-up 30%, semi-finalists 10% each (60% / 40% when 4–5 play). Paid after the 24-hour dispute window. <button type="button" class="evd-lnk" data-evd-go="rules">Rules &amp; eligibility</button></p>
+          <p class="form-note evd-fine">£5 of every entry goes into the prize pool: winner 50%, runner-up 30%, semi-finalists 10% each — or winner 60%, runner-up 40% when a semi-finalist's share would be less than the £8 entry (under 16 players). Paid after the 24-hour dispute window. <button type="button" class="evd-lnk" data-evd-go="rules">Rules &amp; eligibility</button></p>
         </div>
       </div>
       <div class="evd-ov-r">
