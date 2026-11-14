@@ -1058,7 +1058,7 @@ details.ad-d pre{white-space:pre-wrap;font:12px/1.45 var(--mono);color:var(--ivo
     if(po && po.status === 'failed') return badge('refund_due', 'Payout refused') + `<div class="sm ad-err-t">${esc(po.failure_reason || '')}</div><div class="sm">Needs two-admin approval</div>`;
     if(A.pz && A.pz.auto_enabled){
       if(Number(p.amount_pence) > Number(A.pz.auto_max_pence)) return badge('refund_due', 'Over automatic limit') + '<div class="sm">Needs two-admin approval</div>';
-      return badge('ok', 'Pays automatically') + '<div class="sm">Within 15 minutes, unless the daily limit is reached</div>';
+      if(s === 'payable') return badge('ok', 'Pays automatically') + '<div class="sm">Within 15 minutes, unless the daily limit is reached</div>';
     }
     return badge('ok', 'Ready to pay');
   }
@@ -1079,11 +1079,15 @@ details.ad-d pre{white-space:pre-wrap;font:12px/1.45 var(--mono);color:var(--ivo
     return p.state === 'payable' ? `<button type="button" class="ad-btn sm" data-prz-req="${id}">Request payout</button> ${hold}` : hold;
   }
   async function paymentsPrizes(){
-    const d = await rpc('admin_payouts'); A.prizes = d.prizes || []; A.pz = d;
+    const d = await rpc('admin_payouts'); A.pz = d;
+    const PORDER = { winner: 0, runner_up: 1, third: 2, unawarded: 3 };   // newest night first, then 1st, 2nd, 3rd
+    A.prizes = (d.prizes || []).slice().sort((a, b) => String(b.completed_at).localeCompare(String(a.completed_at))
+      || String(a.tournament_id).localeCompare(String(b.tournament_id)) || (PORDER[a.place] ?? 9) - (PORDER[b.place] ?? 9));
     const sum = (f) => A.prizes.filter(f).reduce((s, p) => s + Number(p.amount_pence || 0), 0);
     const n = (f) => A.prizes.filter(f).length;
-    const ready = p => p.state === 'payable' && !(p.payout && ['awaiting_approval','sending'].includes(p.payout.status))
-      && !(d.auto_enabled && Number(p.amount_pence) <= Number(d.auto_max_pence) && !(p.payout && p.payout.status === 'failed'));
+    const autoPay = p => d.enabled && d.auto_enabled && Number(p.amount_pence) <= Number(d.auto_max_pence) && !(p.payout && p.payout.status === 'failed')
+      && (p.state === 'payable' || p.state === 'in_dispute_window') && !(p.payout && p.payout.status === 'awaiting_approval');
+    const ready = p => p.state === 'payable' && !autoPay(p) && !(p.payout && ['awaiting_approval','sending'].includes(p.payout.status));
     const waiting = p => p.payout && p.payout.status === 'awaiting_approval' && p.state === 'payable';
     const tile = (v, k, alert) => `<div class="ad-tile${alert ? ' alert' : ''}"><b>${esc(v)}</b><span>${esc(k)}</span></div>`;
     let h = `<p class="ad-sub">Prizes are worked out automatically when a tournament finishes. One admin requests a payout and a different admin approves it — approving sends it. Nobody can handle a prize from a night they played in.</p>`;
@@ -1091,7 +1095,8 @@ details.ad-d pre{white-space:pre-wrap;font:12px/1.45 var(--mono);color:var(--ivo
     else h += `<p class="ad-muted sm"><b>Automatic payouts: ${d.auto_enabled ? 'on' : 'off'}.</b> ${d.auto_enabled
       ? `Prizes up to ${pounds(d.auto_max_pence)} pay themselves once the 24-hour window closes with no dispute or hold (up to ${pounds(d.auto_daily_pence)} a day). Anything else needs two admins.`
       : 'Every payout needs two admins: one requests, another approves.'}</p>`;
-    h += `<div class="ad-tiles">${tile(n(ready), 'Prizes ready to pay', n(ready) > 0)}${tile(pounds(sum(ready)), 'Total ready to pay')}${tile(n(waiting), 'Waiting for 2nd admin', n(waiting) > 0)}
+    h += `<div class="ad-tiles">${d.auto_enabled ? `${tile(n(autoPay), 'Paying automatically')}${tile(pounds(sum(autoPay)), 'Total paying automatically')}` : ''}
+      ${tile(n(ready), d.auto_enabled ? 'Need two admins' : 'Prizes ready to pay', n(ready) > 0)}${d.auto_enabled ? '' : tile(pounds(sum(ready)), 'Total ready to pay')}${tile(n(waiting), 'Waiting for 2nd admin', n(waiting) > 0)}
       ${tile(n(p => p.state === 'in_dispute_window'), 'In dispute window')}${tile(n(p => ['withheld','dispute_open','needs_decision','dispute_check_failed'].includes(p.state)), 'On hold / to decide', n(p => p.state === 'needs_decision') > 0)}</div>`;
     h += A.prizes.length ? `<div class="ad-tw"><table class="ad-t"><thead><tr><th>Night</th><th>Place</th><th>Player</th><th class="num">Prize</th><th>State</th><th></th></tr></thead><tbody>
       ${A.prizes.map(p => `<tr><td>${p.tournament_id ? `<a href="#tournament:${esc(p.tournament_id)}">${esc(p.tournament || '')}</a>` : '—'}<div class="sm">${esc(day(p.date))}</div></td>
