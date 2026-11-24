@@ -3707,11 +3707,13 @@ EVENTS = (data||[]).map(t => {
     code:    'T-' + String(t.id).padStart(4,'0'),         // no code column; derive a stable one from the id
     entry:   Number(t.entry_fee   || PRICE_ENTRY),
     cap:     Number(t.max_players || 32),
-    reg:     t.tournament_entries ? t.tournament_entries.length : 0,
+    // an entry refunded outside Tournza (PAY-08) no longer counts as entered
+    reg:     (t.tournament_entries||[]).filter(te => te.payment_status !== 'refunded').length,
     // The people who've actually paid to enter THIS tournament — a row
     // without a matched player (shouldn't normally happen; the webhook
     // creates one) is skipped rather than shown as a nameless entry.
     entrants: (t.tournament_entries||[])
+      .filter(te => te.payment_status !== 'refunded')
       .map(te => te.players)
       .filter(Boolean)
       .map(p => ({ id: p.id, name: p.name || 'Player', region: p.region || '' })),
