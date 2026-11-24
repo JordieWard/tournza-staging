@@ -1016,7 +1016,7 @@ details.ad-d pre{white-space:pre-wrap;font:12px/1.45 var(--mono);color:var(--ivo
   function download(name, text){ const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type:'text/csv' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
 
   // ---------- Payments: refunds due (refund through Stripe), refund history, finance, memberships ----------
-  const PAYTABS = [['due','Refunds due'], ['history','Refund history'], ['prizes','Prizes'], ['chargebacks','Chargebacks'], ['finance','Money'], ['members','Memberships']];
+  const PAYTABS = [['due','Refunds due'], ['history','Refund history'], ['prizes','Prizes'], ['chargebacks','Chargebacks'], ['recon','Reconciliation'], ['finance','Money'], ['members','Memberships']];
   async function viewPayments3(){
     const tab = PAYTABS.some(t => t[0] === A.arg) ? A.arg : 'due';
     let h = `<h1 class="ad-h1">Payments</h1><div class="ad-tabs" role="group" aria-label="Show">${PAYTABS.map(([k,l]) => `<button type="button" data-paytab="${k}" class="${tab === k ? 'on' : ''}" aria-pressed="${tab === k}">${l}</button>`).join('')}</div>`;
@@ -1024,6 +1024,7 @@ details.ad-d pre{white-space:pre-wrap;font:12px/1.45 var(--mono);color:var(--ivo
     if(tab === 'history') return h + await paymentsHistory();
     if(tab === 'prizes') return h + await paymentsPrizes();
     if(tab === 'chargebacks') return h + await paymentsChargebacks();
+    if(tab === 'recon') return h + await paymentsRecon();
     if(tab === 'finance') return h + await paymentsFinance();
     return h + await paymentsMembers();
   }
@@ -1050,6 +1051,55 @@ details.ad-d pre{white-space:pre-wrap;font:12px/1.45 var(--mono);color:var(--ivo
         <td class="sm">${esc(r.action)}</td><td>${status(r)}</td>
         <td>${r.status === 'lost' && !r.decision && can('payments.refund') ? `<button type="button" class="ad-btn sm" data-cbdecide="${esc(r.id)}">Decide…</button>` : ''}</td></tr>`).join('')}
       </tbody></table></div>`;
+  }
+  // PAY-10: daily reconciliation — Tournza's money records against the payment provider's statement
+  async function paymentsRecon(){
+    const R = await rpc('admin_reconciliation') || {}; A.recon = R;
+    const days = R.days || [], ex = R.exceptions || [], open = ex.filter(x => x.status === 'open');
+    const last = days[0];
+    const yest = (() => { const d = new Date(Date.now() - 864e5); return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' }).format(d); })();
+    const KIND = { missing_at_provider: 'Not on the provider’s statement', not_in_tournza: 'Not in Tournza’s records', amount_differs: 'Amounts differ', duplicate_at_provider: 'Listed twice by the provider' };
+    const sp = v => v === null || v === undefined ? '—' : (v < 0 ? '−' : '') + pounds(Math.abs(v));
+    let h = `<div class="ad-tiles"><div class="ad-tile${open.length ? ' alert' : ''}"><b>${open.length}</b><span>Differences to look at</span></div>
+      <div class="ad-tile"><b>${last ? esc(new Date(String(last.day).slice(0,10) + 'T12:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short' })) : '—'}</b><span>Last day checked</span></div>
+      <div class="ad-tile${last && last.difference_pence ? ' alert' : ''}"><b>${last ? sp(last.difference_pence) : '—'}</b><span>Difference that day</span></div></div>
+      <p class="ad-muted sm">Every morning Tournza compares yesterday’s payments, refunds, chargebacks and prize payouts with the payment provider’s statement. A clean day shows £0.00 difference. Checking starts from ${R.from ? esc(day(R.from)) : 'when this was installed'}.</p>
+      ${can('payments.view') ? `<div class="ad-row" style="margin-bottom:18px"><label class="ad-lab" for="rc-day" style="margin:0">Check a day</label><input type="date" id="rc-day" value="${esc(yest)}" max="${esc(yest)}" ${R.from ? `min="${esc(R.from)}"` : ''} style="max-width:180px">
+        <button type="button" class="ad-btn sm" data-recrun>Run now</button></div>` : ''}`;
+    if(open.length || ex.length) h += `<section class="ad-sec"><h2>Differences <span class="c">${open.length || ''}</span></h2><div class="ad-tw"><table class="ad-t"><thead><tr><th>Day</th><th>What</th><th class="num">Tournza</th><th class="num">Provider</th><th></th></tr></thead><tbody>
+      ${ex.map(x => `<tr><td class="sm">${esc(day(x.day))}</td><td><b>${esc(KIND[x.kind] || x.kind)}</b><div class="sm">${esc(x.detail)}</div><div class="mono sm">…${esc(x.ref)}</div></td>
+        <td class="num">${sp(x.tournza_pence)}</td><td class="num">${sp(x.provider_pence)}</td>
+        <td>${x.status === 'open' ? (can('payments.refund') ? `<button type="button" class="ad-btn sm" data-recres="${esc(x.id)}">Resolve…</button>` : badge('refund_due', 'Open'))
+          : `${badge('ok', 'Resolved')}<div class="sm">${esc(x.resolved_by || '')} · ${esc(x.resolved_reason || '')}</div>`}</td></tr>`).join('')}</tbody></table></div></section>`;
+    h += `<section class="ad-sec"><h2>Days checked</h2>${days.length ? `<div class="ad-tw"><table class="ad-t"><thead><tr><th>Day</th><th class="num">Tournza</th><th class="num">Provider</th><th class="num">Difference</th><th>Result</th></tr></thead><tbody>
+      ${days.map(d => `<tr><td>${esc(day(d.day))}<div class="sm ad-muted">${esc(d.by || '')} · ${esc(when(d.run_at))}</div></td>
+        <td class="num">${sp(d.tournza_net_pence)}<div class="sm">${d.tournza_lines} item${d.tournza_lines === 1 ? '' : 's'}</div></td>
+        <td class="num">${sp(d.provider_net_pence)}<div class="sm">${d.provider_lines} line${d.provider_lines === 1 ? '' : 's'}${d.fees_pence ? ' · fees ' + pounds(d.fees_pence) : ''}</div></td>
+        <td class="num"><b>${sp(d.difference_pence)}</b></td><td>${d.status === 'balanced' ? badge('ok', 'Balanced') : badge('refund_due', d.open + ' to look at')}</td></tr>`).join('')}
+      </tbody></table></div>` : `<div class="ad-clear">No days checked yet — the daily job runs each morning once the payment provider is connected.</div>`}</section>`;
+    return h;
+  }
+  async function reconRun(btn){
+    const d = ($('#rc-day') || {}).value; if(!d) return;
+    btn.disabled = true; const label = btn.textContent; btn.textContent = 'Checking…';
+    try{
+      const { data, error } = await A.sb.functions.invoke('reconcile', { body: { day: d } });
+      let msg = data && data.error;
+      if(error){ try{ msg = ((await error.context.json()) || {}).error || error.message; }catch(_){ msg = error.message; } }
+      if(msg || !data || !data.ok) toast(msg || 'Couldn’t check that day', true);
+      else toast(data.status === 'balanced' ? `${day(d)}: balanced — £0.00 difference` : `${day(d)}: ${data.open_exceptions} difference${data.open_exceptions === 1 ? '' : 's'} to look at`, data.status !== 'balanced');
+      render();
+    } finally { btn.disabled = false; btn.textContent = label; }
+  }
+  function reconResolveModal(id){
+    const x = ((A.recon || {}).exceptions || []).find(e => String(e.id) === String(id)); if(!x) return;
+    actionModal({
+      title: 'Resolve a difference', submit: 'Mark resolved',
+      intro: `<p><b>${esc(x.detail)}</b></p><p class="ad-muted">Find out why (e.g. a test payment, a refund done by hand, a provider correction), sort it out if needed, then record what you found.</p>`,
+      reasonLabel: 'What you found or did',
+      run: (f, reason) => rpc('admin_reconcile_resolve', { p_id: x.id, p_reason: reason }),
+      done: () => 'Resolved — recorded in the audit log',
+    });
   }
   function chargebackModal(id){
     const r = (A.cbs || []).find(x => String(x.id) === String(id)); if(!r) return;
@@ -1457,6 +1507,8 @@ details.ad-d pre{white-space:pre-wrap;font:12px/1.45 var(--mono);color:var(--ivo
     if(t.matches('[data-coolingoff]')){ coolingOffModal(t.dataset.coolingoff); return true; }
     if(t.matches('[data-outcheck]')){ outsideCheckModal(t.dataset.outcheck); return true; }
     if(t.matches('[data-cbdecide]')){ chargebackModal(t.dataset.cbdecide); return true; }
+    if(t.matches('[data-recrun]')){ reconRun(t); return true; }
+    if(t.matches('[data-recres]')){ reconResolveModal(t.dataset.recres); return true; }
     if(t.matches('[data-paytab]')){ location.hash = '#payments:' + t.dataset.paytab; return true; }
     if(t.matches('[data-dfil]')){ location.hash = '#disputes:' + t.dataset.dfil; return true; }
     if(t.matches('[data-dact]')){ disputeModal(t.dataset.dact); return true; }
